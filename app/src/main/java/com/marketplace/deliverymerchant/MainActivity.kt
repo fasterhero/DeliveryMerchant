@@ -10,6 +10,7 @@ import android.widget.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import android.app.AlertDialog
+import com.google.firebase.firestore.ListenerRegistration
 
 class MainActivity : Activity() {
 
@@ -22,6 +23,8 @@ class MainActivity : Activity() {
     private lateinit var accountLabel: TextView
     private lateinit var ordersList: LinearLayout
     private lateinit var productsList: LinearLayout
+    
+    private var ordersListener: ListenerRegistration? = null
 
     private var loading = false
 
@@ -454,7 +457,8 @@ private fun showProductDialog(
 
 
     private fun loadOrders() {
-        if (loading) return
+        ordersListener?.remove()
+ordersListener = null
 
         val uid = auth.currentUser?.uid
 
@@ -486,21 +490,23 @@ private fun showProductDialog(
                     return@addOnSuccessListener
                 }
 
-                db.collection("orders")
+                ordersListener = db.collection("orders")
                     .whereEqualTo("merchantId", merchantId)
-                    .get()
-                    .addOnSuccessListener { results ->
-                        loading = false
-                        ordersList.removeAllViews()
+.addSnapshotListener { results, error ->
 
-                        if (results.isEmpty) {
-                            ordersList.addView(TextView(this).apply {
-                                text = "No orders found yet."
-                                textSize = 16f
-                                setPadding(0, 12, 0, 12)
-                            })
-                            return@addOnSuccessListener
-                        }
+    if (error != null) {
+        loading = false
+        ordersList.removeAllViews()
+        showMessage("Live order updates failed: ${error.message}")
+        return@addSnapshotListener
+    }
+
+    if (results == null) {
+        loading = false
+        return@addSnapshotListener
+    }
+
+    loading = false
 
                         for (doc in results.documents) {
                             val orderId = doc.id
