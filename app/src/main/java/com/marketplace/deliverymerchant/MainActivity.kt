@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.widget.*
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
+import android.app.AlertDialog
 
 class MainActivity : Activity() {
 
@@ -20,6 +21,7 @@ class MainActivity : Activity() {
     private lateinit var content: LinearLayout
     private lateinit var accountLabel: TextView
     private lateinit var ordersList: LinearLayout
+    private lateinit var productsList: LinearLayout
 
     private var loading = false
 
@@ -196,6 +198,19 @@ class MainActivity : Activity() {
             showLoginScreen()
         }
 
+heading("Product Management")
+
+addButton("Add New Product") {
+    showProductDialog()
+}
+
+productsList = LinearLayout(this).apply {
+    orientation = LinearLayout.VERTICAL
+}
+content.addView(productsList)
+
+loadProducts()
+
         heading("Incoming Orders")
 
         ordersList = LinearLayout(this).apply {
@@ -216,6 +231,227 @@ class MainActivity : Activity() {
             setOnClickListener { action() }
         })
     }
+    
+
+private fun loadProducts() {
+    if (auth.currentUser == null) {
+        showLoginScreen()
+        return
+    }
+
+    productsList.removeAllViews()
+
+    db.collection("merchants")
+        .document(merchantId)
+        .collection("products")
+        .get()
+        .addOnSuccessListener { results ->
+            productsList.removeAllViews()
+
+            if (results.isEmpty) {
+                productsList.addView(TextView(this).apply {
+                    text = "No products found. Add your first product."
+                    textSize = 15f
+                    setPadding(0, 12, 0, 12)
+                })
+                return@addOnSuccessListener
+            }
+
+            for (doc in results.documents) {
+                val productId = doc.id
+                val name = doc.getString("name") ?: "Unnamed product"
+                val price = doc.getDouble("price")
+                    ?: doc.getLong("price")?.toDouble()
+                    ?: 0.0
+                val available = doc.getBoolean("available") == true
+
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(16, 12, 16, 16)
+                    setBackgroundColor(Color.rgb(245, 247, 245))
+                }
+
+                card.addView(TextView(this).apply {
+                    text = name
+                    textSize = 19f
+                    setTextColor(Color.rgb(35, 65, 55))
+                })
+
+                card.addView(TextView(this).apply {
+                    text = "Price: ₱${"%.2f".format(price)}"
+                    textSize = 16f
+                })
+
+                card.addView(TextView(this).apply {
+                    text = if (available) {
+                        "Availability: Available"
+                    } else {
+                        "Availability: Unavailable"
+                    }
+                    textSize = 14f
+                    setPadding(0, 4, 0, 4)
+                })
+
+                addListButton(
+                    card,
+                    "Edit Product"
+                ) {
+                    showProductDialog(
+                        productId = productId,
+                        currentName = name,
+                        currentPrice = price
+                    )
+                }
+
+                addListButton(
+                    card,
+                    if (available) "Mark Unavailable"
+                    else "Mark Available"
+                ) {
+                    db.collection("merchants")
+                        .document(merchantId)
+                        .collection("products")
+                        .document(productId)
+                        .update("available", !available)
+                        .addOnSuccessListener {
+                            showMessage("Product availability updated.")
+                            loadProducts()
+                        }
+                        .addOnFailureListener { error ->
+                            showMessage(
+                                "Could not update product: ${error.message}"
+                            )
+                        }
+                }
+
+                productsList.addView(card)
+                productsList.addView(TextView(this).apply {
+                    height = 16
+                })
+            }
+        }
+        .addOnFailureListener { error ->
+            showMessage(
+                "Could not load products: ${error.message}"
+            )
+        }
+}
+
+private fun showProductDialog(
+    productId: String? = null,
+    currentName: String = "",
+    currentPrice: Double = 0.0
+) {
+    val form = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(40, 8, 40, 8)
+    }
+
+    val nameInput = EditText(this).apply {
+        hint = "Product name"
+        setSingleLine(true)
+        setText(currentName)
+    }
+
+    val priceInput = EditText(this).apply {
+        hint = "Price in pesos"
+        inputType = InputType.TYPE_CLASS_NUMBER or
+            InputType.TYPE_NUMBER_FLAG_DECIMAL
+        setSingleLine(true)
+
+        if (productId != null) {
+            setText(currentPrice.toString())
+        }
+    }
+
+    form.addView(nameInput)
+    form.addView(priceInput)
+
+    val dialog = AlertDialog.Builder(this)
+        .setTitle(
+            if (productId == null) "Add Product"
+            else "Edit Product"
+        )
+        .setView(form)
+        .setNegativeButton("Cancel", null)
+        .setPositiveButton("Save", null)
+        .create()
+
+    dialog.setOnShowListener {
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+            .setOnClickListener {
+                val name = nameInput.text.toString().trim()
+                val price = priceInput.text.toString().toDoubleOrNull()
+
+                if (name.isBlank()) {
+                    showMessage("Enter a product name.")
+                    return@setOnClickListener
+                }
+
+                if (price == null || price < 0) {
+                    showMessage("Enter a valid price.")
+                    return@setOnClickListener
+                }
+
+                val user = auth.currentUser
+
+                if (user == null) {
+                    dialog.dismiss()
+                    showLoginScreen()
+                    return@setOnClickListener
+                }
+
+                val products = db.collection("merchants")
+                    .document(merchantId)
+                    .collection("products")
+
+                val saving = if (productId == null) {
+                    products.add(
+                        mapOf(
+                            "name" to name,
+                            "price" to price,
+                            "available" to true
+                        )
+                    )
+                } else {
+                    products.document(productId).update(
+                        mapOf(
+                            "name" to name,
+                            "price" to price
+                        )
+                    )
+                }
+
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).isEnabled =
+                    false
+
+                saving
+                    .addOnSuccessListener {
+                        dialog.dismiss()
+                        showMessage(
+                            if (productId == null) {
+                                "Product added successfully."
+                            } else {
+                                "Product updated successfully."
+                            }
+                        )
+                        loadProducts()
+                    }
+                    .addOnFailureListener { error ->
+                        dialog.getButton(
+                            AlertDialog.BUTTON_POSITIVE
+                        ).isEnabled = true
+
+                        showMessage(
+                            "Save failed: ${error.message}"
+                        )
+                    }
+            }
+    }
+
+    dialog.show()
+}
+
 
     private fun loadOrders() {
         if (loading) return
