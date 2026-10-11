@@ -456,170 +456,183 @@ private fun showProductDialog(
 }
 
 
-    private fun loadOrders() {
+
+private fun loadOrders() {
+    if (loading) return
+
+    val uid = auth.currentUser?.uid
+
+    if (uid == null) {
         ordersListener?.remove()
-ordersListener = null
-
-        val uid = auth.currentUser?.uid
-
-        if (uid == null) {
-            showLoginScreen()
-            return
-        }
-
-        loading = true
-        ordersList.removeAllViews()
-
-        ordersList.addView(TextView(this).apply {
-            text = "Loading orders..."
-            textSize = 16f
-        })
-
-        db.collection("merchants")
-            .document(merchantId)
-            .get()
-            .addOnSuccessListener { merchant ->
-                if (auth.currentUser?.uid != uid ||
-                    merchant.getString("managerUid") != uid ||
-                    merchant.getBoolean("active") != true
-                ) {
-                    loading = false
-                    auth.signOut()
-                    showLoginScreen()
-                    showMessage("Merchant access could not be verified.")
-                    return@addOnSuccessListener
-                }
-
-                ordersListener = db.collection("orders")
-                    .whereEqualTo("merchantId", merchantId)
-.addSnapshotListener { results, error ->
-
-    if (error != null) {
-        loading = false
-        ordersList.removeAllViews()
-        showMessage("Live order updates failed: ${error.message}")
-        return@addSnapshotListener
+        ordersListener = null
+        showLoginScreen()
+        return
     }
 
-    if (results == null) {
-        loading = false
-        return@addSnapshotListener
-    }
+    // Remove the previous live listener before creating another.
+    ordersListener?.remove()
+    ordersListener = null
 
-    loading = false
+    loading = true
+    ordersList.removeAllViews()
 
-                        for (doc in results.documents) {
-                            val orderId = doc.id
-                            val customerName =
-                                doc.getString("customerName") ?: "Customer"
-                            val phone =
-                                doc.getString("customerPhone") ?: "Not provided"
-                            val address =
-                                doc.getString("deliveryAddress") ?: "Not provided"
-                            val status =
-                                doc.getString("status") ?: "placed"
-                            val payment =
-                                doc.getString("paymentMethod") ?: "Unknown"
-                            val total = doc.getDouble("total")
-                                ?: doc.getLong("total")?.toDouble()
-                                ?: 0.0
+    ordersList.addView(TextView(this).apply {
+        text = "Loading orders..."
+        textSize = 16f
+    })
 
-                            val card = LinearLayout(this).apply {
-                                orientation = LinearLayout.VERTICAL
-                                setPadding(16, 12, 16, 16)
-                                setBackgroundColor(
-                                    Color.rgb(245, 247, 245)
-                                )
-                            }
+    db.collection("merchants")
+        .document(merchantId)
+        .get()
+        .addOnSuccessListener { merchant ->
+            if (
+                auth.currentUser?.uid != uid ||
+                merchant.getString("managerUid") != uid ||
+                merchant.getBoolean("active") != true
+            ) {
+                loading = false
+                ordersListener?.remove()
+                ordersListener = null
+                auth.signOut()
+                showLoginScreen()
+                showMessage("Merchant access could not be verified.")
+                return@addOnSuccessListener
+            }
 
-                            card.addView(TextView(this).apply {
-                                text = "Order ${orderId.take(8)}"
-                                textSize = 19f
-                                setTextColor(Color.rgb(35, 65, 55))
-                            })
+            ordersListener = db.collection("orders")
+                .whereEqualTo("merchantId", merchantId)
+                .addSnapshotListener { results, error ->
 
-                            card.addView(TextView(this).apply {
-                                text =
-                                    "Customer: $customerName\n" +
-                                    "Phone: $phone\n" +
-                                    "Address: $address\n" +
-                                    "Payment: $payment\n" +
-                                    "Total: ₱${"%.2f".format(total)}\n" +
-                                    "Status: ${status.uppercase()}"
-                                textSize = 15f
-                                setTextColor(Color.DKGRAY)
-                                setPadding(0, 8, 0, 8)
-                            })
-
-                            val items = doc.get("items") as? List<*>
-                            val itemLines = items.orEmpty().mapNotNull { item ->
-                                val fields = item as? Map<*, *>
-                                    ?: return@mapNotNull null
-                                val name =
-                                    fields["name"] as? String ?: "Item"
-                                val quantity =
-                                    (fields["quantity"] as? Number)?.toInt() ?: 1
-                                "$name × $quantity"
-                            }
-
-                            card.addView(TextView(this).apply {
-                                text = if (itemLines.isEmpty()) {
-                                    "Items: Details unavailable"
-                                } else {
-                                    "Items:\n" + itemLines.joinToString("\n")
-                                }
-                                textSize = 15f
-                                setTextColor(Color.DKGRAY)
-                                setPadding(0, 4, 0, 8)
-                            })
-
-                            when (status) {
-                                "placed" -> addListButton(
-                                    card, "Accept Order"
-                                ) {
-                                    updateStatus(orderId, "accepted")
-                                }
-
-                                "accepted" -> addListButton(
-                                    card, "Start Preparing"
-                                ) {
-                                    updateStatus(orderId, "preparing")
-                                }
-
-                                "preparing" -> addListButton(
-                                    card, "Mark Ready"
-                                ) {
-                                    updateStatus(orderId, "ready")
-                                }
-
-                                "ready" -> card.addView(TextView(this).apply {
-                                    text = "Waiting for rider assignment."
-                                    textSize = 14f
-                                })
-                            }
-
-                            ordersList.addView(card)
-                            ordersList.addView(TextView(this).apply {
-                                height = 20
-                            })
-                        }
-                    }
-                    .addOnFailureListener { error ->
+                    if (error != null) {
                         loading = false
                         ordersList.removeAllViews()
                         showMessage(
-                            "Could not load orders: ${error.message}"
+                            "Live order updates failed: ${error.message}"
                         )
+                        return@addSnapshotListener
                     }
-            }
-            .addOnFailureListener { error ->
-                loading = false
-                ordersList.removeAllViews()
-                showMessage(
-                    "Could not verify merchant: ${error.message}"
-                )
-            }
-    }
+
+                    if (results == null) {
+                        loading = false
+                        return@addSnapshotListener
+                    }
+
+                    loading = false
+                    ordersList.removeAllViews()
+
+                    if (results.isEmpty) {
+                        ordersList.addView(TextView(this).apply {
+                            text = "No orders yet. New orders will appear here automatically."
+                            textSize = 15f
+                            setPadding(0, 12, 0, 12)
+                        })
+                        return@addSnapshotListener
+                    }
+
+                    for (doc in results.documents) {
+                        val orderId = doc.id
+                        val customerName =
+                            doc.getString("customerName") ?: "Customer"
+                        val phone =
+                            doc.getString("customerPhone") ?: "Not provided"
+                        val address =
+                            doc.getString("deliveryAddress") ?: "Not provided"
+                        val status =
+                            doc.getString("status") ?: "placed"
+                        val payment =
+                            doc.getString("paymentMethod") ?: "Unknown"
+                        val total = doc.getDouble("total")
+                            ?: doc.getLong("total")?.toDouble()
+                            ?: 0.0
+
+                        val card = LinearLayout(this).apply {
+                            orientation = LinearLayout.VERTICAL
+                            setPadding(16, 12, 16, 16)
+                            setBackgroundColor(Color.rgb(245, 247, 245))
+                        }
+
+                        card.addView(TextView(this).apply {
+                            text = "Order ${orderId.take(8)}"
+                            textSize = 19f
+                            setTextColor(Color.rgb(35, 65, 55))
+                        })
+
+                        card.addView(TextView(this).apply {
+                            text =
+                                "Customer: $customerName\n" +
+                                "Phone: $phone\n" +
+                                "Address: $address\n" +
+                                "Payment: $payment\n" +
+                                "Total: ₱${"%.2f".format(total)}\n" +
+                                "Status: ${status.uppercase()}"
+                            textSize = 15f
+                            setTextColor(Color.DKGRAY)
+                            setPadding(0, 8, 0, 8)
+                        })
+
+                        val items = doc.get("items") as? List<*>
+                        val itemLines = items.orEmpty().mapNotNull { item ->
+                            val fields = item as? Map<*, *>
+                                ?: return@mapNotNull null
+                            val name = fields["name"] as? String ?: "Item"
+                            val quantity =
+                                (fields["quantity"] as? Number)?.toInt() ?: 1
+
+                            "$name × $quantity"
+                        }
+
+                        card.addView(TextView(this).apply {
+                            text = if (itemLines.isEmpty()) {
+                                "Items: Details unavailable"
+                            } else {
+                                "Items:\n" + itemLines.joinToString("\n")
+                            }
+                            textSize = 15f
+                            setTextColor(Color.DKGRAY)
+                            setPadding(0, 4, 0, 8)
+                        })
+
+                        when (status) {
+                            "placed" -> addListButton(
+                                card, "Accept Order"
+                            ) {
+                                updateStatus(orderId, "accepted")
+                            }
+
+                            "accepted" -> addListButton(
+                                card, "Start Preparing"
+                            ) {
+                                updateStatus(orderId, "preparing")
+                            }
+
+                            "preparing" -> addListButton(
+                                card, "Mark Ready"
+                            ) {
+                                updateStatus(orderId, "ready")
+                            }
+
+                            "ready" -> card.addView(TextView(this).apply {
+                                text = "Waiting for rider assignment."
+                                textSize = 14f
+                            })
+                        }
+
+                        ordersList.addView(card)
+                        ordersList.addView(TextView(this).apply {
+                            height = 20
+                        })
+                    }
+                }
+        }
+        .addOnFailureListener { error ->
+            loading = false
+            ordersList.removeAllViews()
+            showMessage(
+                "Could not verify merchant: ${error.message}"
+            )
+        }
+}
+
 
     private fun updateStatus(
         orderId: String,
