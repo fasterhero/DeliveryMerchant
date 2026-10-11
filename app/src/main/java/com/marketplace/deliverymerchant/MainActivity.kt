@@ -90,20 +90,20 @@ class MainActivity : Activity() {
         })
 
         val emailInput = EditText(this).apply {
-            hint = "Email address"
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
-            singleLine = true
-        }
+    hint = "Email address"
+    inputType = InputType.TYPE_CLASS_TEXT or
+        InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+    setSingleLine(true)
+}
 
         content.addView(emailInput)
 
         val passwordInput = EditText(this).apply {
-            hint = "Password"
-            inputType = InputType.TYPE_CLASS_TEXT or
-                InputType.TYPE_TEXT_VARIATION_PASSWORD
-            singleLine = true
-        }
+    hint = "Password"
+    inputType = InputType.TYPE_CLASS_TEXT or
+        InputType.TYPE_TEXT_VARIATION_PASSWORD
+    setSingleLine(true)
+}
 
         content.addView(passwordInput)
 
