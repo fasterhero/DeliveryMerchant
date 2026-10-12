@@ -312,7 +312,7 @@ class MainActivity : Activity() {
     private fun stage(status: String): String = when (status.lowercase(Locale.US)) {
         "placed", "pending" -> "new"
         "accepted", "confirmed", "preparing" -> "cooking"
-        "ready", "picked_up", "pickedup", "on_the_way", "out_for_delivery", "delivering", "in_transit" -> "ready"
+        "ready", "assigned", "picked_up", "pickedup", "on_the_way", "out_for_delivery", "delivering", "in_transit" -> "ready"
         else -> "history"
     }
 
@@ -321,6 +321,7 @@ class MainActivity : Activity() {
         "accepted", "confirmed" -> "ACCEPTED"
         "preparing" -> "PREPARING"
         "ready" -> "READY"
+        "assigned" -> "RIDER ASSIGNED"
         "picked_up", "pickedup", "on_the_way", "out_for_delivery", "delivering", "in_transit" -> "ON THE WAY"
         "delivered", "completed" -> "DELIVERED"
         "cancelled", "canceled", "rejected" -> "CANCELLED"
@@ -805,7 +806,7 @@ class MainActivity : Activity() {
                     } else {
                         r.addView(
                             tv(
-                                if (status.lowercase(Locale.US) == "ready") "🛵 Rider assigned" else "🛵 Rider is on the way",
+                                if (status.lowercase(Locale.US) in listOf("ready", "assigned")) "🛵 Rider assigned" else "🛵 Rider is on the way",
                                 13f, GREEN, true
                             ),
                             lp(0, WRAP, 1f)
@@ -1076,35 +1077,27 @@ class MainActivity : Activity() {
 
         sectionTitle(page, "Shop profile")
         page.addView(
-            tv("This is what customers see in the customer app.", 12f, GREY),
+            tv("This is what customers see. Delivery fee: ${money(d?.let { num(it, "deliveryFee", 40.0) } ?: 40.0)} (set by the marketplace).", 12f, GREY),
             lp(WRAP, WRAP, 0f, 0, -4, 0, 8)
         )
         val nameF = inputField("Shop name", d?.getString("name") ?: shopName, InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS)
         val descF = inputField("Short description", d?.getString("description") ?: "", InputType.TYPE_CLASS_TEXT, 2)
         val phoneF = inputField("Shop phone number", d?.getString("phone") ?: d?.getString("phoneNumber") ?: "", InputType.TYPE_CLASS_PHONE)
-        val feeF = inputField(
-            "Delivery fee (₱)",
-            d?.let { num(it, "deliveryFee", 40.0).toInt().toString() } ?: "40",
-            InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_FLAG_DECIMAL
-        )
         val etaF = inputField("Prep/delivery time, e.g. 25-35 min", d?.getString("eta") ?: "")
         val catF = inputField("Category: food or convenience", d?.getString("category") ?: "food")
         val imgF = inputField("Cover image URL (optional)", d?.getString("imageUrl") ?: "", InputType.TYPE_TEXT_VARIATION_URI)
-        listOf(nameF, descF, phoneF, feeF, etaF, catF, imgF).forEach {
+        listOf(nameF, descF, phoneF, etaF, catF, imgF).forEach {
             page.addView(it, lp(MATCH, WRAP, 0f, 0, 0, 0, 8))
         }
         page.addView(
             cta("Save shop profile", GREEN) {
                 val name = nameF.text.toString().trim()
-                val fee = feeF.text.toString().toDoubleOrNull()
                 val cat = catF.text.toString().trim().lowercase(Locale.US)
                 if (name.isBlank()) { toast("Shop name is required."); return@cta }
-                if (fee == null || fee < 0) { toast("Enter a valid delivery fee."); return@cta }
                 val updates = hashMapOf<String, Any>(
                     "name" to name,
                     "description" to descF.text.toString().trim(),
                     "phone" to phoneF.text.toString().trim(),
-                    "deliveryFee" to fee,
                     "eta" to etaF.text.toString().trim().ifBlank { "25-35 min" },
                     "category" to cat.ifBlank { "food" },
                     "imageUrl" to imgF.text.toString().trim()
