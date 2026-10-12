@@ -1,23 +1,233 @@
-<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.INTERNET" />
+rules_version = '2';
 
-    <application
-        android:allowBackup="false"
-        android:label="Delivery Merchant"
-        android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:usesCleartextTraffic="false">
+service cloud.firestore {
+  match /databases/{database}/documents {
 
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
+    // Authentication helpers
+    function signedIn() {
+      return request.auth != null;
+    }
 
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+    function isAdmin() {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/admins/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/admins/$(request.auth.uid)
+        ).data.active == true;
+    }
 
-        </activity>
-    </application>
-</manifest>
+    function isMerchantOwner(merchantId) {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/merchants/$(merchantId)
+        )
+        && get(
+          /databases/$(database)/documents/merchants/$(merchantId)
+        ).data.managerUid == request.auth.uid;
+    }
+
+    function activeMerchant(merchantId) {
+      return exists(
+          /databases/$(database)/documents/merchants/$(merchantId)
+        )
+        && get(
+          /databases/$(database)/documents/merchants/$(merchantId)
+        ).data.active == true;
+    }
+
+    function isActiveRider() {
+      return signedIn()
+        && exists(
+          /databases/$(database)/documents/riders/$(request.auth.uid)
+        )
+        && get(
+          /databases/$(database)/documents/riders/$(request.auth.uid)
+        ).data.active == true;
+    }
+
+    // Admin profiles: users can read only their own profile.
+    // Profile changes are managed in Firebase Console.
+    match /admins/{adminId} {
+      allow read: if signedIn()
+        && request.auth.uid == adminId;
+      allow write: if false;
+    }
+
+    // Rider profiles: riders can read their own profile;
+    // active admins can read rider profiles.
+    match /riders/{riderId} {
+      allow read: if signedIn()
+        && (
+          request.auth.uid == riderId
+          || isAdmin()
+        );
+      allow write: if false;
+    }
+
+    // Customer profiles: each customer can access only their own profile.
+match /customers/{customerId} {
+  allow read: if signedIn()
+    && request.auth.uid == customerId;
+
+  allow create, update: if signedIn()
+    && request.auth.uid == customerId
+    && request.resource.data.keys().hasOnly([
+      "name", "phone", "email"
+    ])
+    && request.resource.data.name is string
+    && request.resource.data.name.size() > 0
+    && request.resource.data.phone is string
+    && request.resource.data.phone.size() > 0
+    && request.resource.data.email is string;
+
+  allow delete: if false;
+}
+
+    // Merchants
+    match /merchants/{merchantId} {
+      allow read: if isAdmin()
+        || resource.data.active == true;
+      allow create, delete: if false;
+
+allow update: if isAdmin()
+  && request.resource.data.diff(resource.data)
+    .affectedKeys().hasOnly(["latitude", "longitude"])
+  && request.resource.data.latitude is number
+  && request.resource.data.latitude >= -90
+  && request.resource.data.latitude <= 90
+  && request.resource.data.longitude is number
+  && request.resource.data.longitude >= -180
+  && request.resource.data.longitude <= 180;
+
+      match /products/{productId} {
+        allow read: if activeMerchant(merchantId)
+          && (
+            resource.data.available == true
+            || isMerchantOwner(merchantId)
+          );
+
+        allow create, update: if activeMerchant(merchantId)
+          && isMerchantOwner(merchantId)
+          && request.resource.data.keys().hasOnly([
+            "name", "price", "available"
+          ])
+          && request.resource.data.name is string
+          && request.resource.data.name.size() > 0
+          && request.resource.data.price is number
+          && request.resource.data.price >= 0
+          && request.resource.data.available is bool;
+
+        allow delete: if false;
+      }
+    }
+
+    // Orders
+    match /orders/{orderId} {
+
+      // Customers create their own COD orders.
+      allow create: if signedIn()
+        && request.resource.data.customerId == request.auth.uid
+        && request.resource.data.status == "placed"
+        && request.resource.data.paymentMethod == "COD"
+        && request.resource.data.riderId == null
+        && request.resource.data.merchantId is string
+        && request.resource.data.customerName is string
+        && request.resource.data.customerPhone is string
+        && request.resource.data.deliveryAddress is string
+        && request.resource.data.items is list
+        && request.resource.data.total is number
+        && request.resource.data.createdAt == request.time
+        && activeMerchant(request.resource.data.merchantId);
+
+      // Customers, merchant owners, eligible riders and admins
+      // may read orders within their permitted scope.
+      allow read: if signedIn()
+        && (
+          isAdmin()
+          || resource.data.customerId == request.auth.uid
+          || isMerchantOwner(resource.data.merchantId)
+          || (
+            isActiveRider()
+            && resource.data.riderId == request.auth.uid
+          )
+          || (
+            isActiveRider()
+            && resource.data.status == "ready"
+            && resource.data.riderId == null
+          )
+        );
+
+      // Order status transitions
+      allow update: if signedIn() && (
+
+        // Merchant: placed -> accepted -> preparing -> ready
+        (
+          isMerchantOwner(resource.data.merchantId)
+          && request.resource.data.diff(resource.data)
+            .affectedKeys().hasOnly(["status"])
+          && (
+            (
+              resource.data.status == "placed"
+              && request.resource.data.status == "accepted"
+            )
+            ||
+            (
+              resource.data.status == "accepted"
+              && request.resource.data.status == "preparing"
+            )
+            ||
+            (
+              resource.data.status == "preparing"
+              && request.resource.data.status == "ready"
+            )
+          )
+        )
+
+        ||
+
+        // Active rider claims an unassigned ready order.
+        (
+          isActiveRider()
+          && resource.data.status == "ready"
+          && resource.data.riderId == null
+          && request.resource.data.riderId == request.auth.uid
+          && request.resource.data.status == "assigned"
+          && request.resource.data.diff(resource.data)
+            .affectedKeys().hasOnly(["riderId", "status"])
+        )
+
+        ||
+
+        // Assigned rider: assigned -> picked_up -> delivered
+        (
+          isActiveRider()
+          && resource.data.riderId == request.auth.uid
+          && request.resource.data.riderId == request.auth.uid
+          && request.resource.data.diff(resource.data)
+            .affectedKeys().hasOnly(["status"])
+          && (
+            (
+              resource.data.status == "assigned"
+              && request.resource.data.status == "picked_up"
+            )
+            ||
+            (
+              resource.data.status == "picked_up"
+              && request.resource.data.status == "delivered"
+            )
+          )
+        )
+      );
+
+      allow delete: if false;
+    }
+
+    // Deny everything not explicitly allowed above.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
